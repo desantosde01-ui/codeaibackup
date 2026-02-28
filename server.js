@@ -7,64 +7,44 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-
-if (!OPENROUTER_API_KEY) {
-  console.warn('WARNING: OPENROUTER_API_KEY not set');
-}
-if (!ANTHROPIC_API_KEY) {
-  console.warn('WARNING: ANTHROPIC_API_KEY not set');
-}
 
 app.use(cors());
 app.use(express.json({ limit: '25mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-/* =========================================================
+/* =========================
    NICHE DETECTION
-========================================================= */
+========================= */
 
 function detectNiche(text) {
   const t = (text || '').toLowerCase();
 
-  const rules = [
-    { key: 'pilates', words: ['pilates'] },
-    { key: 'estetica', words: ['estetica', 'estética', 'harmonizacao', 'harmonização', 'botox', 'preenchimento'] },
-    { key: 'psicologia', words: ['psicologia', 'terapia', 'ansiedade', 'depressao', 'depressão'] },
-    { key: 'nutricao', words: ['nutricao', 'nutrição', 'dieta', 'emagrecimento'] },
-    { key: 'veterinaria', words: ['veterinaria', 'veterinária', 'pet', 'cachorro', 'gato'] },
-    { key: 'restaurante', words: ['restaurante', 'cardapio', 'cardápio'] },
-    { key: 'chacara', words: ['chacara', 'chácara', 'eventos', 'festa', 'casamento'] },
-    { key: 'marketing', words: ['marketing', 'trafego', 'tráfego', 'social media'] },
-    { key: 'tech', words: ['software', 'app', 'site', 'startup', 'tecnologia'] },
-    { key: 'law', words: ['advogado', 'advocacia', 'juridico', 'jurídico'] },
-    { key: 'realestate', words: ['imobiliaria', 'imobiliária', 'corretor', 'imovel', 'imóvel'] },
-    { key: 'fitness', words: ['academia', 'personal trainer', 'treino'] },
-  ];
-
-  for (const rule of rules) {
-    if (rule.words.some(w => t.includes(w))) return rule.key;
-  }
+  if (t.includes('pilates')) return 'pilates';
+  if (t.includes('estetica') || t.includes('estética')) return 'estetica';
 
   return 'default';
 }
 
-/* =========================================================
+/* =========================
    FONT CONFIG
-========================================================= */
+========================= */
 
 const FONT_PAIRS = {
-  pilates: { heading: 'Playfair Display', body: 'Inter', url: 'Playfair+Display:wght@600;700|Inter:wght@400;500;600' },
-  estetica: { heading: 'Bodoni Moda', body: 'Jost', url: 'Bodoni+Moda:wght@600;700|Jost:wght@400;500' },
-  restaurante: { heading: 'Cormorant Garamond', body: 'Nunito', url: 'Cormorant+Garamond:wght@600;700|Nunito:wght@400;600' },
-  tech: { heading: 'Space Grotesk', body: 'DM Sans', url: 'Space+Grotesk:wght@600;700|DM+Sans:wght@400;500' },
-  law: { heading: 'Playfair Display', body: 'Lato', url: 'Playfair+Display:wght@600;700|Lato:wght@400;700' },
-  default: { heading: 'Plus Jakarta Sans', body: 'Inter', url: 'Plus+Jakarta+Sans:wght@600;700|Inter:wght@400;500;600' }
+  pilates: {
+    heading: 'Playfair Display',
+    body: 'Inter',
+    url: 'Playfair+Display:wght@600;700|Inter:wght@400;500;600'
+  },
+  default: {
+    heading: 'Plus Jakarta Sans',
+    body: 'Inter',
+    url: 'Plus+Jakarta+Sans:wght@600;700|Inter:wght@400;500;600'
+  }
 };
 
-/* =========================================================
-   UNSPLASH IMAGES
-========================================================= */
+/* =========================
+   IMAGES
+========================= */
 
 const UNSPLASH_IMAGES = {
   pilates: [
@@ -78,113 +58,126 @@ const UNSPLASH_IMAGES = {
   ]
 };
 
-/* =========================================================
+/* =========================
    SANITIZE
-========================================================= */
+========================= */
 
 function sanitizeCode(code) {
   code = (code || '').trim();
-
   code = code.replace(/^\s*```[a-zA-Z]*\s*/m, '');
   code = code.replace(/\s*```\s*$/m, '');
-
-  const idx = code.search(/\bimport\s+React\b/);
-  if (idx > 0) code = code.slice(idx);
-
-  code = code
-    .replace(/[\u201C\u201D]/g, '"')
-    .replace(/[\u2018\u2019]/g, "'")
-    .replace(/[\u2013\u2014]/g, '-')
-    .replace(/\u00A0/g, ' ');
-
   return code.trim();
 }
 
-/* =========================================================
-   TIMEOUT FETCH
-========================================================= */
+/* =========================
+   BASE FILES (STACKBLITZ)
+========================= */
 
-async function fetchWithTimeout(url, options, timeout = 90000) {
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), timeout);
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } finally {
-    clearTimeout(id);
-  }
+function getBaseFiles(appCode) {
+  return {
+    'package.json': JSON.stringify({
+      name: 'codeai-project',
+      private: true,
+      version: '0.0.0',
+      type: 'module',
+      scripts: {
+        dev: 'vite',
+        build: 'vite build',
+        preview: 'vite preview'
+      },
+      dependencies: {
+        react: '^18.2.0',
+        'react-dom': '^18.2.0',
+        'lucide-react': '^0.263.1'
+      },
+      devDependencies: {
+        '@vitejs/plugin-react': '^4.0.0',
+        tailwindcss: '^3.3.3',
+        postcss: '^8.4.27',
+        autoprefixer: '^10.4.14',
+        typescript: '^5.0.2',
+        vite: '^4.4.5'
+      }
+    }, null, 2),
+
+    'vite.config.ts': `
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+export default defineConfig({ plugins: [react()] })
+`,
+
+    'index.html': `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CodeAI</title>
+</head>
+<body>
+<div id="root"></div>
+<script type="module" src="/src/main.tsx"></script>
+</body>
+</html>
+`,
+
+    'src/main.tsx': `
+import React from 'react'
+import ReactDOM from 'react-dom/client'
+import App from './App'
+import './index.css'
+
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+)
+`,
+
+    'src/index.css': `
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+body { margin: 0; }
+`,
+
+    'src/App.tsx': appCode
+  };
 }
 
-/* =========================================================
+/* =========================
    BUILD PROMPT
-========================================================= */
+========================= */
 
-function buildPrompt(userRequest, currentAppCode, chatHistory) {
-  const isModify = !!currentAppCode;
-
-  const rules = `
-- Return ONLY raw TSX
-- Start with: import React from "react"
-- Export: export default function App()
-- Tailwind CSS only
-- lucide-react allowed
-- ASCII only
-- Properly closed JSX
-`;
-
-  if (isModify) {
-    return `
-You are editing an existing React project.
-
-${rules}
-
-CURRENT CODE:
-${currentAppCode}
-
-USER REQUEST:
-${userRequest}
-
-Return the complete updated App.tsx.
-`;
-  }
-
+function buildPrompt(userRequest, currentAppCode) {
   const niche = detectNiche(userRequest);
   const fonts = FONT_PAIRS[niche] || FONT_PAIRS.default;
   const images = UNSPLASH_IMAGES[niche] || UNSPLASH_IMAGES.default;
 
   return `
-You are a world-class UI/UX designer.
+Return ONLY raw TSX code.
+Start with: import React from "react"
+Export: export default function App()
 
-${rules}
+Use Tailwind CSS only.
 
-FONTS:
 Load Google Fonts:
 https://fonts.googleapis.com/css2?family=${fonts.url}&display=swap
 
-IMAGES:
-Hero background: ${images[0]}
+Hero background image:
+${images[0]}
 
-Create a premium React landing page for:
+Create a premium landing page for:
 ${userRequest}
-
-Include:
-- Full hero with overlay
-- Sections
-- Cards with hover
-- CTA
-- Footer
-
-Return only App.tsx
 `;
 }
 
-/* =========================================================
+/* =========================
    OPENROUTER
-========================================================= */
+========================= */
 
 async function callOpenRouter(prompt) {
-  if (!OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY not configured');
-
-  const response = await fetchWithTimeout(
+  const response = await fetch(
     'https://openrouter.ai/api/v1/chat/completions',
     {
       method: 'POST',
@@ -209,20 +202,22 @@ async function callOpenRouter(prompt) {
   return sanitizeCode(data.choices[0].message.content);
 }
 
-/* =========================================================
-   ROUTES
-========================================================= */
+/* =========================
+   ROUTE
+========================= */
 
 app.post('/api/generate', async (req, res) => {
-  const { prompt, currentAppCode, chatHistory } = req.body;
-  if (!prompt) return res.status(400).json({ error: 'Prompt required' });
+  const { prompt, currentAppCode } = req.body;
 
   try {
     const appCode = await callOpenRouter(
-      buildPrompt(prompt, currentAppCode, chatHistory)
+      buildPrompt(prompt, currentAppCode)
     );
 
-    res.json({ appCode });
+    const files = getBaseFiles(appCode);
+
+    res.json({ files, appCode });
+
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
