@@ -16,7 +16,6 @@ app.use(express.static(path.join(__dirname, "public")));
 
 /* ─────────────────────────────────────────────────────────────────────────────
    PLACEHOLDER CONTRACT (App.tsx MUST use these exact strings)
-   The server replaces them with real image URLs.
 ───────────────────────────────────────────────────────────────────────────── */
 const PLACEHOLDERS = [
   "__IMG_HERO_BG__",
@@ -66,16 +65,17 @@ function sanitizeText(txt) {
   return code;
 }
 
-// Try hard to extract JSON from an LLM response
+// Try hard to extract JSON object from a model response.
+// If it fails, we throw and handle with fallback flow (non-JSON).
 function extractJsonObject(raw) {
   const s = sanitizeText(raw);
 
-  // best case: valid JSON already
+  // direct parse
   try {
     return JSON.parse(s);
   } catch (_) {}
 
-  // fallback: find first { ...last }
+  // find a JSON-like block
   const first = s.indexOf("{");
   const last = s.lastIndexOf("}");
   if (first !== -1 && last !== -1 && last > first) {
@@ -99,49 +99,36 @@ function hash32(str) {
 }
 
 // Build Pollinations image URL (free test)
-// NOTE: this is just a URL, not an API key request.
 function pollinationsUrl(prompt, opts = {}) {
   const width = Number(opts.width || 1400);
   const height = Number(opts.height || 900);
   const seed = Number.isFinite(opts.seed) ? opts.seed : hash32(String(prompt));
   const safePrompt = encodeURIComponent(String(prompt || "").slice(0, 800));
-
-  // Parameters may vary; these are safe defaults used commonly:
-  // - nologo: reduces watermark/logo
-  // - seed: deterministic
-  // - width/height: size
   return `https://image.pollinations.ai/prompt/${safePrompt}?width=${width}&height=${height}&seed=${seed}&nologo=true`;
 }
 
 function buildImageUrlMap(imagePrompts, userRequest) {
   const map = {};
+  const prompts = imagePrompts && typeof imagePrompts === "object" ? imagePrompts : {};
 
-  // Ensure object
-  const prompts = (imagePrompts && typeof imagePrompts === "object") ? imagePrompts : {};
-
-  // Defaults (robust fallback if Claude forgets some)
   const baseStyle =
-    "high-end, premium, realistic photo, cinematic lighting, natural colors, no text, no watermark, ultra detailed";
+    "high-end premium realistic photo, cinematic lighting, natural colors, shallow depth of field, no text, no watermark, ultra detailed";
 
   const fallbackPromptFor = (ph) => {
-    // make the fallback still “context-aware”
     const theme = String(userRequest || "premium website").slice(0, 200);
-    if (ph === "__IMG_HERO_BG__") return `${theme}. Hero background scene. ${baseStyle}. wide angle.`;
-    if (ph.startsWith("__IMG_GALLERY_")) return `${theme}. Gallery photo. ${baseStyle}.`;
-    if (ph.startsWith("__IMG_BENEFIT_")) return `${theme}. Concept image representing a key benefit. ${baseStyle}.`;
-    if (ph.startsWith("__IMG_EXERCISE_")) return `${theme}. Action shot for an exercise/demo. ${baseStyle}.`;
-    if (ph === "__IMG_ABOUT__") return `${theme}. About section photo, welcoming environment. ${baseStyle}.`;
-    if (ph === "__IMG_TEAM__") return `${theme}. Professional team portrait. ${baseStyle}.`;
-    if (ph === "__IMG_CTA_BG__") return `${theme}. Abstract soft gradient / texture background. ${baseStyle}.`;
+    if (ph === "__IMG_HERO_BG__") return `${theme}. hero background scene. ${baseStyle}. wide angle.`;
+    if (ph.startsWith("__IMG_GALLERY_")) return `${theme}. gallery photo. ${baseStyle}.`;
+    if (ph.startsWith("__IMG_BENEFIT_")) return `${theme}. concept photo illustrating a key benefit. ${baseStyle}.`;
+    if (ph.startsWith("__IMG_EXERCISE_")) return `${theme}. exercise demo action shot. ${baseStyle}.`;
+    if (ph === "__IMG_ABOUT__") return `${theme}. about section photo, welcoming environment. ${baseStyle}.`;
+    if (ph === "__IMG_TEAM__") return `${theme}. professional team portrait. ${baseStyle}.`;
+    if (ph === "__IMG_CTA_BG__") return `${theme}. abstract soft background texture. ${baseStyle}.`;
     return `${theme}. ${baseStyle}.`;
   };
 
   for (const ph of PLACEHOLDERS) {
-    const p = typeof prompts[ph] === "string" && prompts[ph].trim()
-      ? prompts[ph].trim()
-      : fallbackPromptFor(ph);
+    const p = typeof prompts[ph] === "string" && prompts[ph].trim() ? prompts[ph].trim() : fallbackPromptFor(ph);
 
-    // sizes per use-case
     let w = 1400, h = 900;
     if (ph === "__IMG_HERO_BG__") { w = 1800; h = 1100; }
     if (ph === "__IMG_CTA_BG__") { w = 1600; h = 900; }
@@ -159,13 +146,10 @@ function buildImageUrlMap(imagePrompts, userRequest) {
 
 function injectImagesIntoAppCode(appCode, imageUrlMap) {
   let code = String(appCode || "");
-
-  // Replace placeholders everywhere
   for (const [ph, url] of Object.entries(imageUrlMap || {})) {
     const safeUrl = String(url).replace(/"/g, "%22");
     code = code.split(ph).join(safeUrl);
   }
-
   return code;
 }
 
@@ -321,23 +305,38 @@ async function callAnthropicVision(image, mediaType, prompt) {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   Prompt Builder (JSON contract + placeholders)
+   Prompt Builders (ROBUST: JSON-first, then fallback)
 ───────────────────────────────────────────────────────────────────────────── */
-function buildGenerateJsonPrompt(userRequest, currentAppCode) {
-  const isModify = !!(currentAppCode && String(currentAppCode).trim());
-
-  const placeholderRule = [
+function placeholderContractText() {
+  return [
     "IMAGE CONTRACT:",
     "- You MUST NOT use any http/https image URLs in App.tsx.",
     "- You MUST use ONLY these placeholders for images (exact strings):",
     "  " + PLACEHOLDERS.join(", "),
     "- Every visible image in the UI must use one of these placeholders.",
     "- Hero background MUST use __IMG_HERO_BG__.",
-    "- Any gallery grid should use __IMG_GALLERY_1__..__IMG_GALLERY_5__ as needed.",
-    "- Benefit images should use __IMG_BENEFIT_1__..__IMG_BENEFIT_5__.",
-    "- Exercise cards should use __IMG_EXERCISE_1__..__IMG_EXERCISE_3__.",
-    "- About/team/cta backgrounds: __IMG_ABOUT__, __IMG_TEAM__, __IMG_CTA_BG__.",
+    "- Gallery uses __IMG_GALLERY_1__..__IMG_GALLERY_5__.",
+    "- Benefit images use __IMG_BENEFIT_1__..__IMG_BENEFIT_5__.",
+    "- Exercise images use __IMG_EXERCISE_1__..__IMG_EXERCISE_3__.",
+    "- About/team/cta: __IMG_ABOUT__, __IMG_TEAM__, __IMG_CTA_BG__.",
   ].join("\n");
+}
+
+function appCodeRulesText() {
+  return [
+    "CODE RULES:",
+    '- Start with: import React from "react"',
+    "- Export: export default function App()",
+    "- Use React + TypeScript + Tailwind classes only",
+    "- No external imports besides react and lucide-react",
+    "- No markdown fences/backticks",
+    "- Use only ASCII characters in JSX text and strings",
+    "- Close all strings and JSX tags properly",
+  ].join("\n");
+}
+
+function buildGenerateJsonPrompt(userRequest, currentAppCode) {
+  const isModify = !!(currentAppCode && String(currentAppCode).trim());
 
   const jsonRule = [
     "OUTPUT FORMAT (STRICT): Return ONE valid JSON object only. No markdown, no commentary.",
@@ -348,24 +347,14 @@ function buildGenerateJsonPrompt(userRequest, currentAppCode) {
     '{ "appCode": "import React from \\"react\\"... ", "imagePrompts": { "__IMG_HERO_BG__": "..." } }',
   ].join("\n");
 
-  const codeRules = [
-    "CODE RULES:",
-    '- appCode must start with: import React from "react"',
-    "- Use React + TypeScript + Tailwind classes only",
-    "- No external imports besides react and lucide-react",
-    "- No markdown fences/backticks",
-    "- Use only ASCII characters in JSX text and strings",
-    "- Close all strings and JSX tags properly",
-  ].join("\n");
-
   if (isModify) {
     return [
       "You are a senior React + TypeScript + Tailwind expert.",
       jsonRule,
-      codeRules,
-      placeholderRule,
+      appCodeRulesText(),
+      placeholderContractText(),
       "",
-      "IMPORTANT: You are EDITING an existing App.tsx. Keep the structure and style unless requested.",
+      "IMPORTANT: You are EDITING an existing App.tsx. Keep structure and style unless requested.",
       "",
       "=== CURRENT App.tsx ===",
       String(currentAppCode),
@@ -381,8 +370,8 @@ function buildGenerateJsonPrompt(userRequest, currentAppCode) {
   return [
     "You are a world-class UI/UX designer and React developer creating agency-quality websites.",
     jsonRule,
-    codeRules,
-    placeholderRule,
+    appCodeRulesText(),
+    placeholderContractText(),
     "",
     "DESIGN REQUIREMENTS:",
     "- Hero: full-screen, strong typography, premium feel",
@@ -398,6 +387,113 @@ function buildGenerateJsonPrompt(userRequest, currentAppCode) {
   ].join("\n");
 }
 
+// Fallback: ask ONLY for App.tsx (no JSON)
+function buildAppOnlyPrompt(userRequest, currentAppCode) {
+  const isModify = !!(currentAppCode && String(currentAppCode).trim());
+
+  if (isModify) {
+    return [
+      "You are a senior React + TypeScript + Tailwind expert.",
+      appCodeRulesText(),
+      placeholderContractText(),
+      "",
+      "IMPORTANT: You are EDITING an existing App.tsx. Make ONLY the requested change and keep everything else intact.",
+      "",
+      "=== CURRENT App.tsx ===",
+      String(currentAppCode),
+      "=== END ===",
+      "",
+      "USER REQUEST:",
+      String(userRequest || ""),
+      "",
+      "Return ONLY the complete App.tsx code. No markdown. No explanation.",
+    ].join("\n");
+  }
+
+  return [
+    "You are a world-class UI/UX designer and React developer creating agency-quality websites.",
+    appCodeRulesText(),
+    placeholderContractText(),
+    "",
+    "DESIGN REQUIREMENTS:",
+    "- Hero: full-screen, strong typography, premium feel",
+    "- Sections: generous spacing (py-24), smooth hover transitions",
+    "- Cards: hover:scale-105 hover:shadow-2xl hover:-translate-y-2 transition-all duration-300",
+    "- Buttons: primary + outline with clear hover states",
+    "- Make it look like a real premium website (no empty boxes)",
+    "",
+    "USER REQUEST:",
+    String(userRequest || ""),
+    "",
+    "Return ONLY the complete App.tsx code. No markdown. No explanation.",
+  ].join("\n");
+}
+
+// Fallback: ask ONLY for imagePrompts JSON mapping
+function buildImagePromptsOnlyPrompt(userRequest, appCode) {
+  const jsonOnly = [
+    "OUTPUT FORMAT (STRICT): Return ONE valid JSON object only. No markdown, no commentary.",
+    "Return an object mapping EACH placeholder to a concise image generation prompt:",
+    "{",
+    '  "__IMG_HERO_BG__": "...",',
+    '  "__IMG_ABOUT__": "...",',
+    "  ...",
+    "}",
+    "You MUST include ALL placeholders listed below (exact keys).",
+    "Use realistic photography prompts, premium look, no text, no watermark.",
+    "Placeholders:",
+    PLACEHOLDERS.join(", "),
+  ].join("\n");
+
+  return [
+    "You are an expert creative director and prompt engineer.",
+    jsonOnly,
+    "",
+    "Context user request:",
+    String(userRequest || ""),
+    "",
+    "Context App.tsx (for style):",
+    String(appCode || "").slice(0, 6000),
+    "",
+    "Return the JSON now.",
+  ].join("\n");
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Robust generator: JSON-first with retry, then fallback 2-step
+───────────────────────────────────────────────────────────────────────────── */
+async function robustGenerate(prompt, currentAppCode) {
+  // 1) Try JSON approach twice (models sometimes comply on retry)
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const raw = await callOpenRouter([{ role: "user", content: buildGenerateJsonPrompt(prompt, currentAppCode) }]);
+    try {
+      const parsed = extractJsonObject(raw);
+      const appCodeRaw = typeof parsed.appCode === "string" ? parsed.appCode : "";
+      if (!appCodeRaw.trim()) throw new Error('Invalid JSON: missing "appCode".');
+
+      const imagePrompts = parsed.imagePrompts && typeof parsed.imagePrompts === "object" ? parsed.imagePrompts : {};
+      return { appCodeRaw, imagePrompts, mode: "json" };
+    } catch (e) {
+      if (attempt === 2) break;
+      // continue retry
+    }
+  }
+
+  // 2) Fallback: ask for App.tsx only (no JSON)
+  const appCodeRaw = await callOpenRouter([{ role: "user", content: buildAppOnlyPrompt(prompt, currentAppCode) }]);
+
+  // 3) Fallback: ask for image prompts JSON only
+  let imagePrompts = {};
+  try {
+    const imgRaw = await callOpenRouter([{ role: "user", content: buildImagePromptsOnlyPrompt(prompt, appCodeRaw) }], 4000);
+    imagePrompts = extractJsonObject(imgRaw);
+  } catch (_) {
+    imagePrompts = {};
+  }
+
+  return { appCodeRaw, imagePrompts, mode: "fallback" };
+}
+
 /* ─────────────────────────────────────────────────────────────────────────────
    Routes
 ───────────────────────────────────────────────────────────────────────────── */
@@ -406,18 +502,13 @@ app.post("/api/generate", async (req, res) => {
   if (!prompt) return res.status(400).json({ error: "Prompt required" });
 
   try {
-    const llmRaw = await callOpenRouter([{ role: "user", content: buildGenerateJsonPrompt(prompt, currentAppCode) }]);
-    const parsed = extractJsonObject(llmRaw);
+    const { appCodeRaw, imagePrompts, mode } = await robustGenerate(prompt, currentAppCode);
 
-    const appCodeRaw = typeof parsed.appCode === "string" ? parsed.appCode : "";
-    if (!appCodeRaw.trim()) throw new Error('Invalid JSON: missing "appCode" string.');
-
-    const imagePrompts = parsed.imagePrompts && typeof parsed.imagePrompts === "object" ? parsed.imagePrompts : {};
     const imageUrlMap = buildImageUrlMap(imagePrompts, prompt);
     const finalAppCode = injectImagesIntoAppCode(appCodeRaw, imageUrlMap);
 
     const files = getBaseFiles(finalAppCode);
-    res.json({ files, appCode: finalAppCode, imageUrlMap }); // imageUrlMap is useful for debugging (optional)
+    res.json({ files, appCode: finalAppCode, imageUrlMap, mode });
   } catch (err) {
     console.error("/api/generate error:", err.message);
     res.status(500).json({ error: err.message });
@@ -432,26 +523,19 @@ app.post("/api/image", async (req, res) => {
     "You are a senior React + TypeScript + Tailwind CSS expert.",
     "Analyze this design and recreate it as a complete App.tsx.",
     "",
-    "RULES:",
-    '- Start with: import React from "react"',
-    "- Export: export default function App()",
-    "- Use Tailwind only",
-    "- Use lucide-react if needed",
-    "- ASCII characters only",
-    "- Close all strings and JSX tags properly",
+    appCodeRulesText(),
     "",
-    "IMAGE CONTRACT:",
-    "- Do NOT use http/https image URLs in TSX.",
-    "- Use ONLY these placeholders for images (exact strings):",
-    "  " + PLACEHOLDERS.join(", "),
+    placeholderContractText(),
     "",
     prompt ? "ADDITIONAL USER NOTES: " + String(prompt) : "",
+    "",
+    "Return ONLY the complete App.tsx code. No markdown. No explanation.",
   ].join("\n");
 
   try {
     const appCodeRaw = await callAnthropicVision(image, mediaType || "image/png", visionPrompt);
 
-    // For vision route, if it didn't return prompts, we still generate fallbacks from prompt
+    // For vision route, we still build URL map from prompt (fallback prompts if missing)
     const imageUrlMap = buildImageUrlMap({}, prompt || "website design");
     const finalAppCode = injectImagesIntoAppCode(appCodeRaw, imageUrlMap);
 
@@ -468,7 +552,7 @@ app.post("/api/chat", async (req, res) => {
   if (!prompt) return res.status(400).json({ error: "Prompt required" });
 
   const fullPrompt =
-    'You are an HTML/CSS/JS expert. Return ONLY complete HTML, no markdown.\n\n' +
+    "You are an HTML/CSS/JS expert. Return ONLY complete HTML, no markdown.\n\n" +
     (code ? "Current code:\n" + code + "\n\nRequest: " + prompt : String(prompt));
 
   try {
