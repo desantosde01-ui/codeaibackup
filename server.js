@@ -1,229 +1,181 @@
-const express = require('express');
-const cors = require('cors');
-const fetch = require('node-fetch');
-const path = require('path');
+const express = require("express");
+const cors = require("cors");
+const fetch = require("node-fetch");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+app.use(cors());
+app.use(express.json({ limit: "20mb" }));
+app.use(express.static("public"));
 
+const PORT = process.env.PORT || 3000;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
-app.use(cors());
-app.use(express.json({ limit: '25mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
-
-/* =========================
-   NICHE DETECTION
-========================= */
-
-function detectNiche(text) {
-  const t = (text || '').toLowerCase();
-
-  if (t.includes('pilates')) return 'pilates';
-  if (t.includes('estetica') || t.includes('estética')) return 'estetica';
-
-  return 'default';
+if (!OPENROUTER_API_KEY) {
+  console.error("OPENROUTER_API_KEY not found in environment variables.");
+  process.exit(1);
 }
 
-/* =========================
-   FONT CONFIG
-========================= */
-
-const FONT_PAIRS = {
-  pilates: {
-    heading: 'Playfair Display',
-    body: 'Inter',
-    url: 'Playfair+Display:wght@600;700|Inter:wght@400;500;600'
-  },
-  default: {
-    heading: 'Plus Jakarta Sans',
-    body: 'Inter',
-    url: 'Plus+Jakarta+Sans:wght@600;700|Inter:wght@400;500;600'
-  }
-};
-
-/* =========================
-   IMAGES
-========================= */
-
-const UNSPLASH_IMAGES = {
-  pilates: [
-    'https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?w=1200&q=80',
-    'https://images.unsplash.com/photo-1518611012118-696072aa579a?w=800&q=80',
-    'https://images.unsplash.com/photo-1506126613408-eca07ce68773?w=800&q=80'
-  ],
-  default: [
-    'https://images.unsplash.com/photo-1497366216548-37526070297c?w=1200&q=80',
-    'https://images.unsplash.com/photo-1497366754035-f200968a7db3?w=800&q=80'
-  ]
-};
-
-/* =========================
-   SANITIZE
-========================= */
-
-function sanitizeCode(code) {
-  code = (code || '').trim();
-  code = code.replace(/^\s*```[a-zA-Z]*\s*/m, '');
-  code = code.replace(/\s*```\s*$/m, '');
-  return code.trim();
-}
-
-/* =========================
-   BASE FILES (STACKBLITZ)
-========================= */
-
-function getBaseFiles(appCode) {
+function baseProjectFiles() {
   return {
-    'package.json': JSON.stringify({
-      name: 'codeai-project',
-      private: true,
-      version: '0.0.0',
-      type: 'module',
-      scripts: {
-        dev: 'vite',
-        build: 'vite build',
-        preview: 'vite preview'
-      },
-      dependencies: {
-        react: '^18.2.0',
-        'react-dom': '^18.2.0',
-        'lucide-react': '^0.263.1'
-      },
-      devDependencies: {
-        '@vitejs/plugin-react': '^4.0.0',
-        tailwindcss: '^3.3.3',
-        postcss: '^8.4.27',
-        autoprefixer: '^10.4.14',
-        typescript: '^5.0.2',
-        vite: '^4.4.5'
-      }
-    }, null, 2),
-
-    'vite.config.ts': `
-import { defineConfig } from 'vite'
+    "package.json": `{
+  "name": "generated-project",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.0.0",
+    "vite": "^5.0.0",
+    "tailwindcss": "^3.4.0",
+    "postcss": "^8.4.0",
+    "autoprefixer": "^10.4.0"
+  }
+}`,
+    "vite.config.js": `import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-export default defineConfig({ plugins: [react()] })
-`,
 
-    'index.html': `
-<!DOCTYPE html>
+export default defineConfig({
+  plugins: [react()],
+})`,
+    "tailwind.config.js": `export default {
+  content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
+  theme: { extend: {} },
+  plugins: [],
+}`,
+    "postcss.config.js": `export default {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+}`,
+    "index.html": `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>CodeAI</title>
+<title>Generated Project</title>
 </head>
 <body>
 <div id="root"></div>
-<script type="module" src="/src/main.tsx"></script>
+<script type="module" src="/src/main.jsx"></script>
 </body>
-</html>
-`,
+</html>`,
+    "src/main.jsx": `import React from "react";
+import ReactDOM from "react-dom/client";
+import App from "./App";
+import "./index.css";
 
-    'src/main.tsx': `
-import React from 'react'
-import ReactDOM from 'react-dom/client'
-import App from './App'
-import './index.css'
-
-ReactDOM.createRoot(document.getElementById('root')!).render(
+ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <App />
   </React.StrictMode>
-)
-`,
-
-    'src/index.css': `
-@tailwind base;
+);`,
+    "src/index.css": `@tailwind base;
 @tailwind components;
-@tailwind utilities;
-body { margin: 0; }
-`,
-
-    'src/App.tsx': appCode
+@tailwind utilities;`
   };
 }
 
-/* =========================
-   BUILD PROMPT
-========================= */
-
-function buildPrompt(userRequest, currentAppCode) {
-  const niche = detectNiche(userRequest);
-  const fonts = FONT_PAIRS[niche] || FONT_PAIRS.default;
-  const images = UNSPLASH_IMAGES[niche] || UNSPLASH_IMAGES.default;
-
+function buildPrompt(userPrompt) {
   return `
-Return ONLY raw TSX code.
-Start with: import React from "react"
-Export: export default function App()
+You are a senior React architect.
 
-Use Tailwind CSS only.
+IMPORTANT RULES:
+- NEVER generate everything in a single App file.
+- ALWAYS split into multiple components inside src/components/.
+- ALWAYS return a valid JSON object.
+- DO NOT return markdown.
+- DO NOT return explanation.
+- ONLY return JSON.
 
-Load Google Fonts:
-https://fonts.googleapis.com/css2?family=${fonts.url}&display=swap
+Architecture required:
 
-Hero background image:
-${images[0]}
+src/
+  App.jsx
+  main.jsx
+  index.css
+  components/
+    Hero.jsx
+    About.jsx
+    Sections.jsx
+    Footer.jsx
 
-Create a premium landing page for:
-${userRequest}
+Rules:
+- App.jsx must import components
+- Each section must be its own component file
+- Clean, readable, modular
+- TailwindCSS
+- Modern UI
+- Production-level code
+
+User request:
+${userPrompt}
+
+Return format:
+
+{
+  "files": {
+    "src/App.jsx": "...",
+    "src/components/Hero.jsx": "...",
+    "src/components/About.jsx": "...",
+    "src/components/Footer.jsx": "..."
+  }
+}
 `;
 }
 
-/* =========================
-   OPENROUTER
-========================= */
+app.post("/api/generate", async (req, res) => {
+  try {
+    const { prompt } = req.body;
+    const finalPrompt = buildPrompt(prompt);
 
-async function callOpenRouter(prompt) {
-  const response = await fetch(
-    'https://openrouter.ai/api/v1/chat/completions',
-    {
-      method: 'POST',
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
-        Authorization: 'Bearer ' + OPENROUTER_API_KEY
+        "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: 'anthropic/claude-sonnet-4-5',
-        max_tokens: 16000,
-        messages: [{ role: 'user', content: prompt }]
+        model: "anthropic/claude-3.5-sonnet",
+        messages: [{ role: "user", content: finalPrompt }],
+        temperature: 0.7
       })
+    });
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content;
+
+    let parsed;
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      return res.status(500).json({ error: "Invalid JSON returned from model." });
     }
-  );
 
-  if (!response.ok) {
-    const err = await response.json();
-    throw new Error(err.error?.message || 'OpenRouter error');
-  }
+    const baseFiles = baseProjectFiles();
+    const mergedFiles = {
+      ...baseFiles,
+      ...parsed.files
+    };
 
-  const data = await response.json();
-  return sanitizeCode(data.choices[0].message.content);
-}
+    res.json({
+      files: mergedFiles
+    });
 
-/* =========================
-   ROUTE
-========================= */
-
-app.post('/api/generate', async (req, res) => {
-  const { prompt, currentAppCode } = req.body;
-
-  try {
-    const appCode = await callOpenRouter(
-      buildPrompt(prompt, currentAppCode)
-    );
-
-    const files = getBaseFiles(appCode);
-
-    res.json({ files, appCode });
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Server error generating project." });
   }
 });
 
 app.listen(PORT, () => {
-  console.log('CodeAI running on port ' + PORT);
+  console.log("Server running on port", PORT);
 });
